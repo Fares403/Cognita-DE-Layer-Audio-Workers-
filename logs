@@ -1,0 +1,32 @@
+[Ingest] Downloading raw/meeting1.wav from bucket raw-audio-meetings...
+[Ingest] File downloaded: /tmp/meeting1.wav
+[Ingest] Uploading to preprocessed/meeting1.wav...
+[Ingest] Done. Output: preprocessed/meeting1.wav
+[Preprocessing] Downloading preprocessed/meeting1.wav from bucket raw-audio-meetings...
+[Preprocessing] File downloaded: /tmp/meeting1.wav
+[Preprocessing] Running ffmpeg: ffmpeg -y -i /tmp/meeting1.wav -af highpass=f=80,lowpass=f=16000,volume=-1dB -ar 16000 -ac 1 /tmp/meeting1_validated.wav
+[Preprocessing] Preprocessing done. Output: /tmp/meeting1_validated.wav
+[Preprocessing] Uploading to validated/meeting1.wav...
+[Preprocessing] Done. Output: validated/meeting1.wav
+[Validation] Downloading validated/meeting1.wav from bucket raw-audio-meetings...
+[Validation] File downloaded: /tmp/meeting1_validated.wav
+[Validation] Running ffprobe: ffprobe -v error -show_entries format=duration,format_name:stream=sample_rate,channels -of json /tmp/meeting1_validated.wav
+[Validation] duration=300.396563s, sample_rate=16000, channels=1, format=wav
+[Validation] File is valid. Proceeding to next stage.
+[Validation] Uploading to extracted/meeting1.wav...
+[Validation] Done. Output: extracted/meeting1.wav
+[AudioExtractor] Downloading extracted/meeting1.wav from bucket raw-audio-meetings...
+[AudioExtractor] File downloaded: /tmp/meeting1_extracted.wav
+[AudioExtractor] Running ffmpeg: ffmpeg -y -i /tmp/meeting1_extracted.wav -ac 1 -ar 16000 -sample_fmt s16 /tmp/meeting1_final.wav
+[AudioExtractor] Extraction done. Output: /tmp/meeting1_final.wav
+[AudioExtractor] Uploading to audio_extracted/meeting1.wav...
+[AudioExtractor] Done. Output: audio_extracted/meeting1.wav
+Bucket 'raw-audio-meetings' already exists
+Converting MP3 -> WAV: ffmpeg -y -i '/media/fares-ashraf/Fares USB/Cognita/Cognita DE Layer (Audio Workers)/raw_audio_example/Elissa.mp3' -ac 1 -ar 16000 -sample_fmt s16 /tmp/tmpbn3sszgz/meeting1.wav
+Uploading /tmp/tmpbn3sszgz/meeting1.wav to s3://raw-audio-meetings/raw/meeting1.wav
+Running worker: /home/fares-ashraf/anaconda3/bin/python /media/fares-ashraf/Fares USB/Cognita/Cognita DE Layer (Audio Workers)/workers/ingest/ingest.py
+Running worker: /home/fares-ashraf/anaconda3/bin/python /media/fares-ashraf/Fares USB/Cognita/Cognita DE Layer (Audio Workers)/workers/preprocessing/preprocessing.py
+Running worker: /home/fares-ashraf/anaconda3/bin/python /media/fares-ashraf/Fares USB/Cognita/Cognita DE Layer (Audio Workers)/workers/validation/validation.py
+Running worker: /home/fares-ashraf/anaconda3/bin/python /media/fares-ashraf/Fares USB/Cognita/Cognita DE Layer (Audio Workers)/workers/audio_extractor/audio_extractor.py
+Pipeline finished. Final extracted file should be at:
+s3://raw-audio-meetings/audio_extracted/meeting1.wav

@@ -1,0 +1,3 @@
+# Shared requirements for all workers
+boto3
+minio
