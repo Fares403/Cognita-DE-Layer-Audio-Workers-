@@ -62,3 +62,25 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET=raw-audio-meetings
+
+  audio_normalizer_worker:
+    build: ./workers/audio_normalizer
+    depends_on:
+      audio_extractor_worker:
+        condition: service_completed_successfully
+    environment:
+      - MINIO_ENDPOINT=minio
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=raw-audio-meetings
+
+  audio_chunker_worker:
+    build: ./workers/audio_chunker
+    depends_on:
+      audio_normalizer_worker:
+        condition: service_completed_successfully
+    environment:
+      - MINIO_ENDPOINT=minio
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET=raw-audio-meetings

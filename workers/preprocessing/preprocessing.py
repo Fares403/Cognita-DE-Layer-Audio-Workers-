@@ -21,9 +21,9 @@ def main():
     )
 
     input_key = 'preprocessed/meeting1.wav'
-    output_key = 'validated/meeting1.wav'
+    output_key = 'preprocessed/meeting1.wav'
     local_file = '/tmp/meeting1.wav'
-    local_out = '/tmp/meeting1_validated.wav'
+    local_out = '/tmp/meeting1_processed.wav'
 
     print(f"[Preprocessing] Downloading {input_key} from bucket {minio_bucket}...")
     try:

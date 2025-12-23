@@ -19,10 +19,10 @@ def main():
         region_name='us-east-1'
     )
 
-    input_key = 'validated/meeting1.wav'
-    output_key = 'extracted/meeting1.wav'
-    local_file = '/tmp/meeting1_validated.wav'
-    local_out = '/tmp/meeting1_extracted.wav'
+    input_key = 'preprocessed/meeting1.wav'
+    output_key = 'validated/meeting1.wav'
+    local_file = '/tmp/meeting1_preprocessed.wav'
+    local_out = '/tmp/meeting1_validated.wav'
 
     print(f"[Validation] Downloading {input_key} from bucket {minio_bucket}...")
     try:

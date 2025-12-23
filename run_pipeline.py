@@ -20,6 +20,8 @@ BUCKET = os.environ.get("MINIO_BUCKET", "raw-audio-meetings")
 ROOT = pathlib.Path(__file__).parent
 INGEST = [sys.executable, str(ROOT / "workers" / "ingest" / "ingest.py")]
 PREPROCESS = [sys.executable, str(ROOT / "workers" / "preprocessing" / "preprocessing.py")]
+AUDIO_NORMALIZER = [sys.executable, str(ROOT / "workers" / "audio_normalizer" / "audio_normalizer.py")]
+AUDIO_CHUNKER = [sys.executable, str(ROOT / "workers" / "audio_chunker" / "audio_chunker.py")]
 VALIDATE = [sys.executable, str(ROOT / "workers" / "validation" / "validation.py")]
 AUDIO_EXTRACT = [sys.executable, str(ROOT / "workers" / "audio_extractor" / "audio_extractor.py")]
 
@@ -123,18 +125,20 @@ def main():
         "MINIO_BUCKET": BUCKET,
     }
 
-    # Run ingest -> preprocessing -> validation -> audio_extractor
+    # Run ingest -> preprocessing -> validation -> extractor -> normalizer -> chunker
     try:
         run_worker(INGEST, env=worker_env)
         run_worker(PREPROCESS, env=worker_env)
         run_worker(VALIDATE, env=worker_env)
         run_worker(AUDIO_EXTRACT, env=worker_env)
+        run_worker(AUDIO_NORMALIZER, env=worker_env)
+        run_worker(AUDIO_CHUNKER, env=worker_env)
     except subprocess.CalledProcessError as e:
         print(f"Worker failed with exit code {e.returncode}")
         sys.exit(1)
 
-    print("Pipeline finished. Final extracted file should be at:")
-    print(f"s3://{BUCKET}/audio_extracted/meeting1.wav")
+    print("Pipeline finished. Final processed chunks should be at:")
+    print(f"s3://{BUCKET}/chunks/meeting1/chunk_XXX.wav")
 
 
 if __name__ == "__main__":

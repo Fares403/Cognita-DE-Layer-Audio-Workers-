@@ -20,10 +20,10 @@ def main():
         region_name='us-east-1'
     )
 
-    input_key = 'extracted/meeting1.wav'
-    output_key = 'audio_extracted/meeting1.wav'
-    local_file = '/tmp/meeting1_extracted.wav'
-    local_out = '/tmp/meeting1_final.wav'
+    input_key = 'validated/meeting1.wav'
+    output_key = 'extracted/meeting1.wav'
+    local_file = '/tmp/meeting1_validated.wav'
+    local_out = '/tmp/meeting1_extracted.wav'
 
     print(f"[AudioExtractor] Downloading {input_key} from bucket {minio_bucket}...")
     try:

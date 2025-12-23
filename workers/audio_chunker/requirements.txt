@@ -1,0 +1,3 @@
+# Audio Chunker Worker Requirements
+boto3
+minio
