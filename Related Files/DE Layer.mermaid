@@ -1,0 +1,159 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Inter, Segoe UI, Arial",
+    "fontSize": "16px",
+    "primaryColor": "#faf7f7",
+    "primaryTextColor": "#000000",
+    "lineColor": "#e64e12ff",
+    "background": "#f6e9e9ff"
+  },
+  "flowchart": {
+    "nodeSpacing": 70,
+    "rankSpacing": 80,
+    "curve": "basis"
+  }
+}}%%
+
+graph TB
+
+%% ==================== MODERN STYLES ====================
+classDef de fill:#eef2ff,stroke:#6366f1,stroke-width:1.5px,color:#1e1b4b,rx:10,ry:10
+classDef db fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,color:#78350f,rx:14,ry:14
+classDef kafka fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,color:#7f1d1d,rx:20,ry:20
+classDef cache fill:#ecfeff,stroke:#06b6d4,stroke-width:1.5px,color:#083344,rx:20,ry:20
+classDef service fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a,rx:10,ry:10
+classDef controller fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a,rx:10,ry:10
+classDef failure fill:#fee2e2,stroke:#dc2626,stroke-width:2px,color:#991b1b,rx:10,ry:10
+classDef event fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,color:#7f1d1d,rx:10,ry:10
+
+%% ==================== INPUT & CONTROL ====================
+MS["Meeting Service\nUpload file • Track lifecycle"]:::service
+REPLAY["Reprocessing Controller\nPeriodic scan • Trigger replay"]:::controller
+
+%% ==================== EVENT BUS ====================
+UP["meeting.uploaded.v1"]:::kafka
+INGEST_EVENT["meeting.ingested.v1"]:::kafka
+EXTRACT_EVENT["audio.extracted.v1"]:::kafka
+NORMALIZE_EVENT["audio.normalized.v1"]:::kafka
+CHUNK_EVENT["audio.chunked.v1"]:::kafka
+
+%% ==================== DATA ENGINEERING WORKERS ====================
+INGEST["Ingest Worker\nValidate upload • Create metadata"]:::de
+PRE["Preprocessing Worker\nNoise reduction • Audio filtering"]:::de
+VALID["Validation Worker\nFormat & Duration Check"]:::de
+AP["Audio Extractor\nDecode → WAV 16kHz"]:::de
+AN["Audio Normalizer\nTrim silence • Normalize"]:::de
+SEG["Audio Chunker\n≤15 min chunks + overlap"]:::de
+
+%% ==================== STORAGE & CACHE ====================
+S3PROC[("S3 Processed Audio\nRaw, Normalized, Chunks")]:::db
+PROCMETA[("PostgreSQL processing_metadata\nStage, retries, last_chunk")]:::db
+PROCESSED_FILES[("PostgreSQL processed_files\nChunk status, paths")]:::db
+REDIS[("Redis\nIdempotency & Replay Guards")]:::cache
+
+%% ==================== FAILURE EVENTS ====================
+FAIL_INGEST["Failure: Ingest\nInvalid payload • DB error"]:::failure
+FAIL_PRE["Failure: Preprocessing\nS3 timeout • ffmpeg crash"]:::failure
+FAIL_VALID["Failure: Validation\nInvalid format • Duration out of bounds"]:::failure
+FAIL_AP["Failure: Audio Extractor\nCodec error • S3 upload fail"]:::failure
+FAIL_AN["Failure: Audio Normalizer\nSilence trim fail • Normalization error"]:::failure
+FAIL_SEG["Failure: Audio Chunker\nChunk extraction fail • DB atomic fail"]:::failure
+
+%% ==================== ALERTS ====================
+ALERT["Alert Operators\nMax retries exceeded • Manual intervention"]:::event
+
+%% ==================== SUCCESS FLOW ====================
+MS -->|"upload completed"| UP
+UP -->|"start ingest"| INGEST
+INGEST -->|update metadata| PROCMETA
+INGEST -->|check idempotency| REDIS
+INGEST -->|"emit"| INGEST_EVENT
+INGEST_EVENT -->|"start preprocessing"| PRE
+
+PRE -->|update stage| PROCMETA
+PRE -->|idempotency| REDIS
+PRE -->|success| VALID
+
+VALID -->|update stage| PROCMETA
+VALID -->|idempotency| REDIS
+VALID -->|success| AP
+
+AP -->|update stage| PROCMETA
+AP -->|idempotency| REDIS
+AP -->|store decoded audio| S3PROC
+AP -->|"emit"| EXTRACT_EVENT
+EXTRACT_EVENT -->|"start normalization"| AN
+
+AN -->|update stage| PROCMETA
+AN -->|idempotency| REDIS
+AN -->|store normalized audio| S3PROC
+AN -->|"emit"| NORMALIZE_EVENT
+NORMALIZE_EVENT -->|"start chunking"| SEG
+
+SEG -->|pre-create chunks| PROCESSED_FILES
+SEG -->|update stage & last_chunk| PROCMETA
+SEG -->|idempotency per chunk| REDIS
+SEG -->|store chunks| S3PROC
+SEG -->|"emit"| CHUNK_EVENT
+
+%% ==================== FAILURE FLOWS ====================
+INGEST -->|failure| FAIL_INGEST
+FAIL_INGEST -->|increment retry| PROCMETA
+FAIL_INGEST -->|retry| INGEST
+
+PRE -->|failure| FAIL_PRE
+FAIL_PRE -->|increment retry| PROCMETA
+FAIL_PRE -->|retry| PRE
+
+VALID -->|failure| FAIL_VALID
+FAIL_VALID -->|increment retry| PROCMETA
+FAIL_VALID -->|retry| VALID
+
+AP -->|failure| FAIL_AP
+FAIL_AP -->|increment retry| PROCMETA
+FAIL_AP -->|retry| AP
+
+AN -->|failure| FAIL_AN
+FAIL_AN -->|increment retry| PROCMETA
+FAIL_AN -->|retry| AN
+
+SEG -->|failure| FAIL_SEG
+FAIL_SEG -->|increment retry| PROCMETA
+FAIL_SEG -->|mark chunk FAILED| PROCESSED_FILES
+FAIL_SEG -->|retry| SEG
+
+%% ==================== REPLAY CONTROLLER ====================
+REPLAY -->|scan stuck meetings| PROCMETA
+REPLAY -->|check retry_count < 3| PROCMETA
+REPLAY -->|acquire replay guard| REDIS
+REPLAY -->|re-emit events| INGEST
+REPLAY -->|re-emit events| PRE
+REPLAY -->|re-emit events| VALID
+REPLAY -->|re-emit events| AP
+REPLAY -->|re-emit events| AN
+REPLAY -->|re-emit events| SEG
+
+%% ==================== MAX RETRIES ====================
+PROCMETA -->|retry_count >= 3| ALERT
+ALERT -->|mark FAILED| PROCMETA
+
+%% ==================== IDEMPOTENCY LINKS ====================
+INGEST -.->|idempotency key| REDIS
+PRE -.->|idempotency key| REDIS
+VALID -.->|idempotency key| REDIS
+AP -.->|idempotency key| REDIS
+AN -.->|idempotency key| REDIS
+SEG -.->|idempotency key| REDIS
+
+%% ==================== LEGEND ====================
+subgraph LEGEND["Legend"]
+    L1[DE Worker]:::de
+    L2[(Database / Storage)]:::db
+    L3[Kafka Event]:::kafka
+    L4[Cache / Idempotency]:::cache
+    L5[Service / API]:::service
+    L6[Controller]:::controller
+    L7[Failure Event]:::failure
+    L8[Alert]:::event
+end

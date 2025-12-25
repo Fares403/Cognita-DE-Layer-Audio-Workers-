@@ -1,0 +1,191 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Inter, Segoe UI, Arial",
+    "fontSize": "18px",
+    "primaryColor": "#faf7f7ff",
+    "primaryTextColor": "#000000ff",
+    "lineColor": "#e64e12ff",
+    "background": "#f6e9e9ff"
+  },
+  "flowchart": {
+    "nodeSpacing": 70,
+    "rankSpacing": 80,
+    "curve": "basis"
+  }
+}}%%
+
+graph TB
+
+%% ==================== STYLES ====================
+classDef service fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,rx:10,ry:10
+classDef de fill:#eef2ff,stroke:#6366f1,stroke-width:1.5px,rx:10,ry:10
+classDef ai fill:#faf5ff,stroke:#a855f7,stroke-width:1.5px,rx:10,ry:10
+classDef db fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,rx:14,ry:14
+classDef output fill:#ecfdf5,stroke:#10b981,stroke-width:1.5px,rx:10,ry:10
+classDef kafka fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,rx:20,ry:20
+classDef cache fill:#ecfeff,stroke:#06b6d4,stroke-width:1.5px,rx:20,ry:20
+classDef control fill:#f1f5f9,stroke:#334155,stroke-width:2px,rx:14,ry:14
+
+%% ==================== INPUT ====================
+subgraph INPUT["Input & Control Services"]
+  MS["Meeting Service"]:::service
+  ORG["Org Service"]:::service
+  SUB["Subscription Service"]:::service
+end
+
+%% ==================== EVENTS ====================
+subgraph EVENTS["Kafka Event Bus"]
+  UP["meeting.uploaded.v1"]:::kafka
+  ING["meeting.ingested.v1"]:::kafka
+  AE["audio.extracted.v1"]:::kafka
+  ANE["audio.normalized.v1"]:::kafka
+  CH["audio.chunked.v1"]:::kafka
+  STT_TOPIC["transcript.segments.v1"]:::kafka
+  DIAR_TOPIC["transcript.diarized.v1"]:::kafka
+  DONE["meeting.processed.v1"]:::kafka
+end
+
+%% ==================== DE ====================
+subgraph DE["Data Engineering Layer – Batch"]
+  INGEST["Ingest Worker"]:::de
+  PRE["Preprocessing Worker"]:::de
+  VALID["Validation Worker"]:::de
+  AP["Audio Extractor"]:::de
+  AN["Audio Normalizer"]:::de
+  SEG["Audio Chunker"]:::de
+end
+
+S3PROC[("S3 / MinIO\nAudio Storage")]:::db
+PROCMETA[("PostgreSQL\nProcessing Metadata")]:::db
+REDIS[("Redis\nIdempotency & Deduplication")]:::cache
+
+%% ==================== CONTROLLER ====================
+CTRL["Processing Controller\nRetry • Replay • Recovery"]:::control
+
+%% ==================== AI ====================
+subgraph AI_T["AI Transformation Layer"]
+  STT["STT Worker"]:::ai
+  DIAR["Diarization Worker"]:::ai
+  ENRICH["Transcript Enrichment"]:::ai
+end
+
+S3TRANS[("S3\nFinal Transcripts")]:::db
+TRANS_META[("PostgreSQL\nTranscript Metadata")]:::db
+
+%% ==================== AI ENRICHMENT ====================
+subgraph AI_E["AI Enrichment Layer"]
+  SUM["Summarization Worker"]:::ai
+  ACT["Action Detection Worker"]:::ai
+  TOPIC["Topic Extraction Worker"]:::ai
+  RAG["RAG Pipeline"]:::ai
+end
+
+VEC[("Postgres + pgvector\nVector Store")]:::db
+
+%% ==================== OUTPUT ====================
+subgraph OUT["Outputs & Status"]
+  SUM_OUT["Summary Generated"]:::output
+  ACT_OUT["Actions Extracted"]:::output
+  TOPIC_OUT["Topics Identified"]:::output
+  EMB_OUT["RAG Index Ready"]:::output
+  STATUS["Meeting Status = PROCESSED"]:::output
+end
+
+%% ==================== FLOWS ====================
+
+MS -->|upload audio file| UP
+UP -->|start ingestion| INGEST
+INGEST -->|persist processing record| PROCMETA
+INGEST -->|publish ingest event| ING
+
+ING -->|preprocess audio| PRE
+PRE -->|store cleaned audio| S3PROC
+PRE -->|update processing stage| PROCMETA
+
+PRE -->|validate audio| VALID
+VALID -->|approve for extraction| AP
+VALID -->|record validation result| PROCMETA
+
+AP -->|decode & resample WAV| S3PROC
+AP -->|publish extraction event| AE
+AP -->|update processing stage| PROCMETA
+
+AE -->|normalize volume & silence| AN
+AN -->|store normalized audio| S3PROC
+AN -->|publish normalization event| ANE
+AN -->|update processing stage| PROCMETA
+
+ANE -->|split into chunks| SEG
+SEG -->|store audio chunks| S3PROC
+SEG -->|store chunk metadata| PROCMETA
+SEG -->|publish chunk events| CH
+
+CH -->|speech recognition| STT
+STT -->|store transcript segments| TRANS_META
+STT -->|publish transcript segments| STT_TOPIC
+
+STT_TOPIC -->|speaker attribution| DIAR
+DIAR -->|update speaker mapping| TRANS_META
+DIAR -->|publish diarized transcript| DIAR_TOPIC
+
+DIAR_TOPIC -->|cleanup & structuring| ENRICH
+ENRICH -->|store final transcript| S3TRANS
+ENRICH -->|update transcript metadata| TRANS_META
+
+SUB -->|feature flag control| SUM
+SUB -->|feature flag control| ACT
+SUB -->|feature flag control| RAG
+
+ENRICH -->|text input| SUM
+ENRICH -->|text input| ACT
+ENRICH -->|text input| TOPIC
+
+RAG -->|store embeddings| VEC
+
+SUM -->|generate summary| SUM_OUT
+ACT -->|extract action items| ACT_OUT
+TOPIC -->|extract topics| TOPIC_OUT
+RAG -->|index completed| EMB_OUT
+
+SUM_OUT -->|mark completion| STATUS
+ACT_OUT -->|mark completion| STATUS
+TOPIC_OUT -->|mark completion| STATUS
+EMB_OUT -->|mark completion| STATUS
+
+STATUS -->|emit processed event| DONE
+DONE -->|update meeting lifecycle| MS
+
+%% ==================== CONTROLLER ====================
+PROCMETA -. failure detected .-> CTRL
+CTRL -->|idempotency check| REDIS
+CTRL -->|replay failed events| EVENTS
+
+%% ==================== IDEMPOTENCY ====================
+INGEST -.-> REDIS
+PRE -.-> REDIS
+VALID -.-> REDIS
+AP -.-> REDIS
+AN -.-> REDIS
+SEG -.-> REDIS
+STT -.-> REDIS
+DIAR -.-> REDIS
+ENRICH -.-> REDIS
+SUM -.-> REDIS
+ACT -.-> REDIS
+RAG -.-> REDIS
+
+%% ==================== DEPENDENCY ====================
+ACT -->|validate assignees| ORG
+
+%% ==================== LEGEND ====================
+subgraph LEGEND["Legend & Notation"]
+  L1["Rounded Rectangle\nService / API"]:::service
+  L2["Blue Node\nDE Worker"]:::de
+  L3["Purple Node\nAI Worker"]:::ai
+  L4["Cylinder\nDatabase / Object Storage"]:::db
+  L5["Red Capsule\nKafka Event / Topic"]:::kafka
+  L6["Dashed Arrow\nIdempotency / Retry Check"]:::cache
+  L7["Solid Arrow\nData or Control Flow"]:::output
+  L8["Controller Node\nFailure Recovery & Replay"]:::control
+end
