@@ -7,6 +7,10 @@ import boto3
 from botocore.client import Config
 import tempfile
 import pathlib
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if it exists
+load_dotenv()
 
 # Orchestrator: creates bucket, converts mp3 to wav, uploads, runs workers sequentially.
 # Usage: python run_pipeline.py [path/to/file.mp3]
@@ -16,6 +20,9 @@ MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin123")
 BUCKET = os.environ.get("MINIO_BUCKET", "raw-audio-meetings")
 
+# API Key should be set in environment or .env file
+# os.environ["OPENAI_API_KEY"] = "..."
+
 # Worker commands (relative to this file)
 ROOT = pathlib.Path(__file__).parent
 INGEST = [sys.executable, str(ROOT / "workers" / "ingest" / "ingest.py")]
@@ -24,6 +31,7 @@ AUDIO_NORMALIZER = [sys.executable, str(ROOT / "workers" / "audio_normalizer" / 
 AUDIO_CHUNKER = [sys.executable, str(ROOT / "workers" / "audio_chunker" / "audio_chunker.py")]
 VALIDATE = [sys.executable, str(ROOT / "workers" / "validation" / "validation.py")]
 AUDIO_EXTRACT = [sys.executable, str(ROOT / "workers" / "audio_extractor" / "audio_extractor.py")]
+SST_WORKER = [sys.executable, str(ROOT / "workers" / "sst_worker" / "sst_worker.py")]
 
 
 def check_ffmpeg():
@@ -125,7 +133,7 @@ def main():
         "MINIO_BUCKET": BUCKET,
     }
 
-    # Run ingest -> preprocessing -> validation -> extractor -> normalizer -> chunker
+    # Run ingest -> preprocessing -> validation -> extractor -> normalizer -> chunker -> sst
     try:
         run_worker(INGEST, env=worker_env)
         run_worker(PREPROCESS, env=worker_env)
@@ -133,12 +141,21 @@ def main():
         run_worker(AUDIO_EXTRACT, env=worker_env)
         run_worker(AUDIO_NORMALIZER, env=worker_env)
         run_worker(AUDIO_CHUNKER, env=worker_env)
+        
+        # Check if API key is present before running SST
+        if os.environ.get("OPENAI_API_KEY"):
+            run_worker(SST_WORKER, env=worker_env)
+        else:
+            print("[Pipeline] Skipping SST Worker: OPENAI_API_KEY not found.")
+            
     except subprocess.CalledProcessError as e:
         print(f"Worker failed with exit code {e.returncode}")
         sys.exit(1)
 
     print("Pipeline finished. Final processed chunks should be at:")
     print(f"s3://{BUCKET}/chunks/meeting1/chunk_XXX.wav")
+    if os.environ.get("OPENAI_API_KEY"):
+         print(f"s3://{BUCKET}/transcripts/meeting1/segments.json")
 
 
 if __name__ == "__main__":
