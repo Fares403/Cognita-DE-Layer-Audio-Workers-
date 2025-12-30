@@ -6,6 +6,32 @@ import tempfile
 import json
 import openai
 from pathlib import Path
+import time
+
+def transcribe_with_retry(audio_file, max_retries=3):
+    """Transcribe audio with retry logic for rate limits."""
+    for attempt in range(max_retries):
+        try:
+            transcript = openai.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                response_format="verbose_json"
+            )
+            return transcript
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str or "insufficient_quota" in error_str:
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4 seconds
+                    print(f"[SST Worker] Rate limit hit, retrying in {wait_time} seconds... (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    print(f"[SST Worker] Max retries reached for rate limit error.")
+                    raise e
+            else:
+                # For other errors, don't retry
+                raise e
 
 def main():
     minio_endpoint = os.environ.get("MINIO_ENDPOINT", "localhost")
@@ -72,11 +98,7 @@ def main():
             
             try:
                 with open(local_filename, "rb") as audio_file:
-                    transcript = openai.Audio.transcribe(
-                        model="whisper-1", 
-                        file=audio_file,
-                        response_format="verbose_json"
-                    )
+                    transcript = transcribe_with_retry(audio_file)
                 
                 # Extract segments and adjust timestamps based on chunk index/offset if needed.
                 # NOTE: Chunks have overlap. Real system needs to handle overlap and deduplication.
