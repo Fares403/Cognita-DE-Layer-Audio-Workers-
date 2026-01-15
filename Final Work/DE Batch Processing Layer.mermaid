@@ -1,0 +1,88 @@
+%%{init: {
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Inter, Segoe UI, Arial",
+    "fontSize": "16px",
+    "primaryTextColor": "#000000",
+    "lineColor": "#6366f1",
+    "background": "#f6e9e9ff"
+  },
+  "flowchart": {
+    "nodeSpacing": 80,
+    "rankSpacing": 90,
+    "curve": "basis"
+  }
+}}%%
+
+graph LR
+
+%% ==================== STYLES ====================
+classDef service fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,rx:10,ry:10
+classDef de fill:#eef2ff,stroke:#6366f1,stroke-width:1.5px,rx:10,ry:10
+classDef kafka fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,rx:20,ry:20
+classDef db fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,rx:14,ry:14
+classDef cache fill:#ecfeff,stroke:#06b6d4,stroke-width:1.5px,rx:20,ry:20
+
+%% ==================== INPUT ====================
+MS["Meeting Service\nUpload Audio & Track Lifecycle"]:::service
+UP["Kafka Event\nmeeting.uploaded.v1"]:::kafka
+
+%% ==================== WORKERS ====================
+INGEST["Ingest Worker\nValidate S3 Path\nInit Metadata"]:::de
+PRE["Preprocessing Worker\nHPF • LPF • Noise Reduction"]:::de
+VALID["Validation Worker\nDuration • Format • Channels"]:::de
+AP["Audio Extractor\nDecode → PCM WAV\n16kHz • Mono • 16-bit"]:::de
+AN["Audio Normalizer\nSilence Trim\nLUFS Normalization"]:::de
+SEG["Audio Chunker\n15-min Chunks\n20s Overlap"]:::de
+
+%% ==================== EVENTS ====================
+INGEST_EVENT["Kafka Event\nmeeting.ingested.v1"]:::kafka
+EXTRACT_EVENT["Kafka Event\naudio.extracted.v1"]:::kafka
+NORMALIZE_EVENT["Kafka Event\naudio.normalized.v1"]:::kafka
+CHUNK_EVENT["Kafka Event\naudio.chunked.v1"]:::kafka
+
+%% ==================== STORAGE ====================
+S3RAW[("S3\nRaw Uploaded Audio")]:::db
+S3PROC[("S3\nProcessed Audio & Chunks")]:::db
+META[("PostgreSQL\nprocessing_metadata")]:::db
+FILES[("PostgreSQL\nprocessed_files")]:::db
+REDIS[("Redis\nIdempotency Guards")]:::cache
+
+%% ==================== FLOW ====================
+MS -->|"Upload completed"| S3RAW
+MS -->|"Publish upload event"| UP
+
+UP -->|"Consume upload notification"| INGEST
+INGEST -->|"Verify raw file exists"| S3RAW
+INGEST -->|"Initialize processing state"| META
+INGEST -->|"Emit ingestion success"| INGEST_EVENT
+
+INGEST_EVENT -->|"Trigger audio cleaning"| PRE
+PRE -->|"Apply spectral filters"| VALID
+PRE -->|"Update progress"| META
+
+VALID -->|"Ensure playable & within limits"| AP
+VALID -->|"Mark as VALIDATED"| META
+
+AP -->|"Transcode to canonical WAV"| S3PROC
+AP -->|"Emit decoded audio event"| EXTRACT_EVENT
+AP -->|"Update stage to EXTRACTED"| META
+
+EXTRACT_EVENT -->|"Trigger loudness & silence normalization"| AN
+AN -->|"Store normalized audio"| S3PROC
+AN -->|"Emit normalized event"| NORMALIZE_EVENT
+AN -->|"Update stage to NORMALIZED"| META
+
+NORMALIZE_EVENT -->|"Split into time-bounded segments"| SEG
+SEG -->|"Persist chunk files"| S3PROC
+SEG -->|"Create chunk records"| FILES
+SEG -->|"Emit chunk-ready events"| CHUNK_EVENT
+SEG -->|"Update stage to CHUNKED"| META
+
+%% ==================== SHARED GUARDS ====================
+INGEST -.->|"Idempotency check"| REDIS
+PRE -.->|"Idempotency check"| REDIS
+VALID -.->|"Idempotency check"| REDIS
+AP -.->|"Idempotency check"| REDIS
+AN -.->|"Idempotency check"| REDIS
+SEG -.->|"Idempotency per chunk"| REDIS
