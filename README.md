@@ -1,4 +1,4 @@
-# Cognita Meeting Audio Data Engineering Pipeline
+# Meeting Audio Data Engineering Pipeline
 
 This project implements a full audio processing pipeline for meeting recordings, using MinIO for object storage and Python worker scripts for each stage. It follows the architecture and steps described in the technical documentation.
 
